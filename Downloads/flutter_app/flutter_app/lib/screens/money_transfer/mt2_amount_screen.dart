@@ -4,7 +4,7 @@ import '../../widgets/shared_widgets.dart';
 import 'mt3_confirm_screen.dart';
 
 class MT2AmountScreen extends StatefulWidget {
-  //StatefulWidget
+  //StatefulWidge
   const MT2AmountScreen({super.key});
 
   @override
