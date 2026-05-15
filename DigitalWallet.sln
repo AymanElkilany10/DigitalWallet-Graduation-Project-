@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DigitalWallet.Infrastructur
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DigitalWallet.API", "DigitalWallet.API\DigitalWallet.API.csproj", "{ACAA2DA1-0C5F-49B3-B49A-DE6EE5F1E17B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DigitalWallet.Tests", "DigitalWallet.Tests\DigitalWallet.Tests.csproj", "{55689C64-50B1-4105-A288-5494C9B5E189}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +35,10 @@ Global
 		{ACAA2DA1-0C5F-49B3-B49A-DE6EE5F1E17B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ACAA2DA1-0C5F-49B3-B49A-DE6EE5F1E17B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{ACAA2DA1-0C5F-49B3-B49A-DE6EE5F1E17B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{55689C64-50B1-4105-A288-5494C9B5E189}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{55689C64-50B1-4105-A288-5494C9B5E189}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{55689C64-50B1-4105-A288-5494C9B5E189}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{55689C64-50B1-4105-A288-5494C9B5E189}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

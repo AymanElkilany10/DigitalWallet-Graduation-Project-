@@ -83,7 +83,6 @@ namespace DigitalWallet.Application.Services
 
                 await _unitOfWork.Notifications.AddAsync(notification);
 
-                await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
 
                 var transactionDto = _mapper.Map<FakeBankTransactionDto>(bankTransaction);
@@ -162,7 +161,6 @@ namespace DigitalWallet.Application.Services
 
                 await _unitOfWork.Notifications.AddAsync(notification);
 
-                await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
 
                 var transactionDto = _mapper.Map<FakeBankTransactionDto>(bankTransaction);

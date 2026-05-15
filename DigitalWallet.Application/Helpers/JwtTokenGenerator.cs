@@ -3,6 +3,8 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using DigitalWallet.Domain.Entities;
+using Microsoft.Extensions.Options;
+using DigitalWallet.Application.Common.Models;
 
 namespace DigitalWallet.Application.Helpers
 {
@@ -26,6 +28,10 @@ namespace DigitalWallet.Application.Helpers
             _issuer = issuer;
             _audience = audience;
             _expirationHours = expirationHours;
+        }
+
+        public JwtTokenGenerator(IOptions<JwtSettings> options)
+        {
         }
 
         /// <summary>

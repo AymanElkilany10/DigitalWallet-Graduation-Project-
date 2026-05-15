@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using DigitalWallet.Application.Common;
 using DigitalWallet.Application.DTOs.Exchange;
+using DigitalWallet.Application.Helpers;
 using DigitalWallet.Application.Interfaces.Repositories;
 using DigitalWallet.Application.Interfaces.Services;
 using DigitalWallet.Domain.Entities;
@@ -13,22 +14,21 @@ namespace DigitalWallet.Application.Services
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
         private readonly IExternalExchangeRateService _externalRateService;
+        private readonly ICachingService _cache;
 
         public CurrencyExchangeService(
             IUnitOfWork unitOfWork,
             IMapper mapper,
-            IExternalExchangeRateService externalRateService)
+            IExternalExchangeRateService externalRateService,
+            ICachingService cache)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _externalRateService = externalRateService;
+            _cache = cache;
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Exchange Currency
-        // ─────────────────────────────────────────────────────────────
-        public async Task<ServiceResult<ExchangeResponseDto>> ExchangeCurrencyAsync(
-            ExchangeRequestDto request)
+        public async Task<ServiceResult<ExchangeResponseDto>> ExchangeCurrencyAsync(ExchangeRequestDto request)
         {
             await _unitOfWork.BeginTransactionAsync();
 
@@ -41,15 +41,15 @@ namespace DigitalWallet.Application.Services
                     return ServiceResult<ExchangeResponseDto>.Failure("Wallet not found");
 
                 if (fromWallet.UserId != toWallet.UserId)
-                    return ServiceResult<ExchangeResponseDto>.Failure("Wallets must belong to the same user");
+                    return ServiceResult<ExchangeResponseDto>.Failure("Wallets must belong to same user");
 
                 if (fromWallet.CurrencyCode == toWallet.CurrencyCode)
-                    return ServiceResult<ExchangeResponseDto>.Failure("Cannot exchange the same currency");
+                    return ServiceResult<ExchangeResponseDto>.Failure("Cannot exchange same currency");
 
                 if (fromWallet.Balance < request.Amount)
                     return ServiceResult<ExchangeResponseDto>.Failure("Insufficient balance");
 
-                var rate = await GetCurrentExchangeRateAsync(fromWallet.CurrencyCode, toWallet.CurrencyCode);
+                var rate = await GetCurrentExchangeRateAsync(fromWallet.CurrencyCode,toWallet.CurrencyCode);
 
                 if (rate == null)
                     return ServiceResult<ExchangeResponseDto>.Failure("Exchange rate unavailable");
@@ -61,14 +61,12 @@ namespace DigitalWallet.Application.Services
                 if (fromWallet.Balance < totalDeducted)
                     return ServiceResult<ExchangeResponseDto>.Failure("Insufficient balance including fee");
 
-                // Update balances
                 fromWallet.Balance -= totalDeducted;
                 toWallet.Balance += convertedAmount;
 
                 await _unitOfWork.Wallets.UpdateAsync(fromWallet);
                 await _unitOfWork.Wallets.UpdateAsync(toWallet);
 
-                // Create exchange record
                 var exchange = new CurrencyExchange
                 {
                     UserId = fromWallet.UserId,
@@ -85,7 +83,6 @@ namespace DigitalWallet.Application.Services
 
                 await _unitOfWork.CurrencyExchanges.AddAsync(exchange);
 
-                // Transactions
                 await _unitOfWork.Transactions.AddAsync(new Transaction
                 {
                     WalletId = fromWallet.Id,
@@ -93,7 +90,7 @@ namespace DigitalWallet.Application.Services
                     Amount = -totalDeducted,
                     CurrencyCode = fromWallet.CurrencyCode,
                     Status = TransactionStatus.Success,
-                    Description = $"Currency exchange to {toWallet.CurrencyCode}",
+                    Description = $"Exchange to {toWallet.CurrencyCode}",
                     Reference = exchange.Id.ToString()
                 });
 
@@ -104,11 +101,10 @@ namespace DigitalWallet.Application.Services
                     Amount = convertedAmount,
                     CurrencyCode = toWallet.CurrencyCode,
                     Status = TransactionStatus.Success,
-                    Description = $"Currency exchange from {fromWallet.CurrencyCode}",
+                    Description = $"Exchange from {fromWallet.CurrencyCode}",
                     Reference = exchange.Id.ToString()
                 });
 
-                // Notification
                 await _unitOfWork.Notifications.AddAsync(new Notification
                 {
                     UserId = fromWallet.UserId,
@@ -118,8 +114,9 @@ namespace DigitalWallet.Application.Services
                     IsRead = false
                 });
 
-                await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
+
+                await InvalidateCachesAsync(fromWallet.UserId, fromWallet.Id, toWallet.Id);
 
                 var response = new ExchangeResponseDto
                 {
@@ -134,7 +131,7 @@ namespace DigitalWallet.Application.Services
                     ExchangedAt = DateTime.UtcNow
                 };
 
-                return ServiceResult<ExchangeResponseDto>.Success(response, "Currency exchanged successfully");
+                return ServiceResult<ExchangeResponseDto>.Success(response, "Exchange successful");
             }
             catch (Exception ex)
             {
@@ -143,9 +140,6 @@ namespace DigitalWallet.Application.Services
             }
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Exchange Rates
-        // ─────────────────────────────────────────────────────────────
         public async Task<ServiceResult<ExchangeRateDto>> GetExchangeRateAsync(string fromCurrency, string toCurrency)
         {
             var rate = await GetCurrentExchangeRateAsync(fromCurrency, toCurrency);
@@ -166,18 +160,25 @@ namespace DigitalWallet.Application.Services
         {
             try
             {
-                var dict = await _externalRateService.GetAllRatesAsync(baseCurrency);
+                var cacheKey = CacheKeys.AllExchangeRates();
 
-                if (dict == null || dict.Count == 0)
-                    return ServiceResult<List<ExchangeRateDto>>.Success(new List<ExchangeRateDto>());
+                var rates = await _cache.GetOrSetAsync(
+                    cacheKey,
+                    async () =>
+                    {
+                        var dict = await _externalRateService.GetAllRatesAsync(baseCurrency)
+                                   ?? new Dictionary<string, decimal>();
 
-                var rates = dict.Select(x => new ExchangeRateDto
-                {
-                    FromCurrency = baseCurrency,
-                    ToCurrency = x.Key,
-                    Rate = x.Value,
-                    LastUpdated = DateTime.UtcNow
-                }).ToList();
+                        return dict.Select(x => new ExchangeRateDto
+                        {
+                            FromCurrency = baseCurrency,
+                            ToCurrency = x.Key,
+                            Rate = x.Value,
+                            LastUpdated = DateTime.UtcNow
+                        }).ToList();
+                    },
+                    TimeSpan.FromHours(1)
+                );
 
                 return ServiceResult<List<ExchangeRateDto>>.Success(rates);
             }
@@ -187,7 +188,8 @@ namespace DigitalWallet.Application.Services
             }
         }
 
-        public async Task<ServiceResult<List<ExchangeResponseDto>>> GetUserExchangeHistoryAsync(Guid userId, int pageNumber = 1, int pageSize = 20)
+        public async Task<ServiceResult<List<ExchangeResponseDto>>> GetUserExchangeHistoryAsync(
+            Guid userId, int pageNumber = 1, int pageSize = 20)
         {
             var exchanges = await _unitOfWork.CurrencyExchanges
                 .GetUserExchangesAsync(userId, pageNumber, pageSize);
@@ -230,20 +232,40 @@ namespace DigitalWallet.Application.Services
 
             await _unitOfWork.SaveChangesAsync();
 
+            await _cache.RemoveAsync(CacheKeys.AllExchangeRates());
+
             return ServiceResult<bool>.Success(true, "Rates updated");
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Helpers
-        // ─────────────────────────────────────────────────────────────
         private async Task<decimal?> GetCurrentExchangeRateAsync(string fromCurrency, string toCurrency)
         {
-            var dbRate = await _unitOfWork.ExchangeRates.GetRateAsync(fromCurrency, toCurrency);
-            if (dbRate != null) return (decimal?)dbRate.Rate;
+            var cacheKey = CacheKeys.ExchangeRate(fromCurrency, toCurrency);
 
-            return await _externalRateService.GetExchangeRateAsync(fromCurrency, toCurrency);
+            return await _cache.GetOrSetAsync(
+                cacheKey,
+                async () =>
+                {
+                    var dbRate = await _unitOfWork.ExchangeRates.GetRateAsync(fromCurrency, toCurrency);
+                    if (dbRate != null)
+                        return (decimal?)dbRate.Rate;
+
+                    return await _externalRateService.GetExchangeRateAsync(fromCurrency, toCurrency);
+                },
+                TimeSpan.FromHours(1)
+            );
         }
 
         private decimal CalculateExchangeFee(decimal amount) => amount * 0.005m;
+
+        private async Task InvalidateCachesAsync(Guid userId, Guid fromWalletId, Guid toWalletId)
+        {
+            await _cache.RemoveAsync(CacheKeys.UserWallets(userId));
+            await _cache.RemoveAsync(CacheKeys.WalletBalance(fromWalletId));
+            await _cache.RemoveAsync(CacheKeys.WalletBalance(toWalletId));
+            await _cache.RemoveAsync(CacheKeys.Wallet(fromWalletId));
+            await _cache.RemoveAsync(CacheKeys.Wallet(toWalletId));
+            await _cache.RemoveByPatternAsync(CacheKeys.TransactionPattern(fromWalletId));
+            await _cache.RemoveByPatternAsync(CacheKeys.TransactionPattern(toWalletId));
+        }
     }
 }

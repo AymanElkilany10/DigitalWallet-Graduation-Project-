@@ -127,7 +127,6 @@ namespace DigitalWallet.Application.Services
                 {
                     moneyRequest.Status = MoneyRequestStatus.Rejected;
                     await _unitOfWork.MoneyRequests.UpdateAsync(moneyRequest);
-                    await _unitOfWork.SaveChangesAsync();
                     await _unitOfWork.CommitTransactionAsync();
 
                     return ServiceResult<bool>.Success(true, "Request rejected");
@@ -174,7 +173,6 @@ namespace DigitalWallet.Application.Services
                 // Mark OTP as used
                 await _unitOfWork.OtpCodes.MarkAsUsedAsync(otp.Id);
 
-                await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
 
                 return ServiceResult<bool>.Success(true, "Request accepted and payment processed");
