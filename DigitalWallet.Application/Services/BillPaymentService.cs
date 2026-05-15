@@ -13,21 +13,40 @@ namespace DigitalWallet.Application.Services
     {
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
+        private readonly ICachingService _cache;
+        private readonly INotificationService _notificationService;
 
-        public BillPaymentService(IUnitOfWork unitOfWork, IMapper mapper, INotificationService notificationService)
+        public BillPaymentService(
+            IUnitOfWork unitOfWork,
+            IMapper mapper,
+            INotificationService notificationService,
+            ICachingService cache)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
+            _cache = cache;
+            _notificationService = notificationService;
         }
 
+        /// <summary>
+        /// Get all active billers (CACHED for 24 hours)
+        /// </summary>
         public async Task<ServiceResult<IEnumerable<BillerDto>>> GetAllBillersAsync()
         {
-            
-
             try
             {
-                var billers = await _unitOfWork.Billers.GetActiveBillersAsync();
-                var billerDtos = _mapper.Map<IEnumerable<BillerDto>>(billers);
+                var cacheKey = CacheKeys.ActiveBillers();
+
+                var billerDtos = await _cache.GetOrSetAsync(
+                    cacheKey,
+                    async () =>
+                    {
+                        var billers = await _unitOfWork.Billers.GetActiveBillersAsync();
+                        return _mapper.Map<IEnumerable<BillerDto>>(billers);
+                    },
+                    TimeSpan.FromHours(24) 
+                );
+
                 return ServiceResult<IEnumerable<BillerDto>>.Success(billerDtos);
             }
             catch (Exception ex)
@@ -37,6 +56,9 @@ namespace DigitalWallet.Application.Services
             }
         }
 
+        /// <summary>
+        /// Pay a bill with OTP verification
+        /// </summary>
         public async Task<ServiceResult<BillPaymentDto>> PayBillAsync(
             Guid userId,
             PayBillRequestDto request)
@@ -44,7 +66,6 @@ namespace DigitalWallet.Application.Services
             await _unitOfWork.BeginTransactionAsync();
             try
             {
-                // Verify OTP
                 var otp = await _unitOfWork.OtpCodes.GetValidOtpAsync(
                     userId,
                     request.OtpCode,
@@ -53,7 +74,6 @@ namespace DigitalWallet.Application.Services
                 if (otp == null)
                     return ServiceResult<BillPaymentDto>.Failure("Invalid or expired OTP");
 
-                // Verify wallet
                 var wallet = await _unitOfWork.Wallets.GetByIdAsync(request.WalletId);
                 if (wallet == null || wallet.UserId != userId)
                     return ServiceResult<BillPaymentDto>.Failure("Wallet not found");
@@ -61,12 +81,10 @@ namespace DigitalWallet.Application.Services
                 if (wallet.Balance < request.Amount)
                     return ServiceResult<BillPaymentDto>.Failure("Insufficient balance");
 
-                // Verify biller
                 var biller = await _unitOfWork.Billers.GetByIdAsync(request.BillerId);
                 if (biller == null || !biller.IsActive)
                     return ServiceResult<BillPaymentDto>.Failure("Biller not available");
 
-                // Create bill payment
                 var billPayment = new BillPayment
                 {
                     UserId = userId,
@@ -80,11 +98,9 @@ namespace DigitalWallet.Application.Services
 
                 await _unitOfWork.BillPayments.AddAsync(billPayment);
 
-                // Update wallet balance
                 wallet.Balance -= request.Amount;
                 await _unitOfWork.Wallets.UpdateAsync(wallet);
 
-                // Create transaction record
                 var transaction = new Domain.Entities.Transaction
                 {
                     WalletId = wallet.Id,
@@ -98,10 +114,8 @@ namespace DigitalWallet.Application.Services
 
                 await _unitOfWork.Transactions.AddAsync(transaction);
 
-                // Mark OTP as used
                 await _unitOfWork.OtpCodes.MarkAsUsedAsync(otp.Id);
 
-                // Create notification
                 var notification = new Notification
                 {
                     UserId = userId,
@@ -112,9 +126,8 @@ namespace DigitalWallet.Application.Services
                 };
 
                 await _unitOfWork.Notifications.AddAsync(notification);
-
-                await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
+                await InvalidateCachesAsync(userId, wallet.Id);
 
                 var paymentDto = _mapper.Map<BillPaymentDto>(billPayment);
                 return ServiceResult<BillPaymentDto>.Success(
@@ -129,18 +142,32 @@ namespace DigitalWallet.Application.Services
             }
         }
 
+        /// <summary>
+        /// Get payment history with pagination (CACHED for 1 minute)
+        /// </summary>
         public async Task<ServiceResult<PaginatedResult<BillPaymentDto>>> GetPaymentHistoryAsync(
-            Guid userId, int pageNumber = 1, int pageSize = 20)
+            Guid userId,
+            int pageNumber = 1,
+            int pageSize = 20)
         {
             try
             {
-                var payments = await _unitOfWork.BillPayments.GetByUserIdAsync(
-                    userId, pageNumber, pageSize);
-                var totalCount = payments.Count();
+                var cacheKey = CacheKeys.UserBillPayments(userId, pageNumber, pageSize);
 
-                var paymentDtos = _mapper.Map<List<BillPaymentDto>>(payments);
-                var paginatedResult = PaginatedResult<BillPaymentDto>.Create(
-                    paymentDtos, totalCount, pageNumber, pageSize);
+                var paginatedResult = await _cache.GetOrSetAsync(
+                    cacheKey,
+                    async () =>
+                    {
+                        var payments = await _unitOfWork.BillPayments.GetByUserIdAsync(
+                            userId, pageNumber, pageSize);
+                        var totalCount = payments.Count();
+
+                        var paymentDtos = _mapper.Map<List<BillPaymentDto>>(payments);
+                        return PaginatedResult<BillPaymentDto>.Create(
+                            paymentDtos, totalCount, pageNumber, pageSize);
+                    },
+                    TimeSpan.FromMinutes(1) 
+                );
 
                 return ServiceResult<PaginatedResult<BillPaymentDto>>.Success(paginatedResult);
             }
@@ -149,6 +176,24 @@ namespace DigitalWallet.Application.Services
                 return ServiceResult<PaginatedResult<BillPaymentDto>>.Failure(
                     $"Error retrieving payment history: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 🆕 Invalidate all relevant caches after bill payment
+        /// </summary>
+        private async Task InvalidateCachesAsync(Guid userId, Guid walletId)
+        {
+            await _cache.RemoveAsync(CacheKeys.WalletBalance(walletId));
+
+            await _cache.RemoveAsync(CacheKeys.Wallet(walletId));
+
+            await _cache.RemoveAsync(CacheKeys.UserWallets(userId));
+
+            await _cache.RemoveByPatternAsync(CacheKeys.TransactionPattern(walletId));
+
+            await _cache.RemoveByPatternAsync($"bill-payments:user:{userId}*");
+
+            await _cache.RemoveAsync(CacheKeys.UnreadNotificationCount(userId));
         }
     }
 }

@@ -13,6 +13,11 @@ using DigitalWallet.API.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using DigitalWallet.Infrastructure.Data.Seeds;
+using DigitalWallet.Application.ExternalServices.SMS;
+using DigitalWallet.Application.ExternalServices.Email;
+using DigitalWallet.Application.Settings;
+using DigitalWallet.Application.Common.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,13 +32,21 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
         sqlOptions => sqlOptions.MigrationsAssembly("DigitalWallet.Infrastructure")
     ));
 
+builder.Services.Configure<JwtSettings>(
+    builder.Configuration.GetSection("Jwt"));
+
 
 // ── Redis Caching Configuration ────────────────────────────────────────
-/*builder.Services.AddStackExchangeRedisCache(options =>
+builder.Services.AddStackExchangeRedisCache(options =>
 {
     options.Configuration = builder.Configuration.GetConnectionString("Redis");
     options.InstanceName = "DigitalWallet_";
-});*/
+});
+
+builder.Services.Configure<SendGridSettings>(builder.Configuration.GetSection("SendGrid"));
+builder.Services.Configure<TwilioSettings>(builder.Configuration.GetSection("Twilio"));
+builder.Services.Configure<NotificationSettings>(builder.Configuration.GetSection("NotificationSettings"));
+
 
 
 
@@ -53,6 +66,7 @@ builder.Services.AddScoped<IAdminRepository, AdminRepository>();
 builder.Services.AddScoped<IMoneyRequestRepository, MoneyRequestRepository>();
 builder.Services.AddScoped<IFraudLogRepository, FraudLogRepository>();
 
+
 // ── 1.3 Service Registration ───────────────────────────────────────────────
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserService, UserService>();
@@ -64,10 +78,16 @@ builder.Services.AddScoped<IFakeBankService, FakeBankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddScoped<IMoneyRequestService, MoneyRequestService>();
-//builder.Services.AddScoped<ICachingService, RedisCachingService>();
+builder.Services.AddScoped<ICachingService, RedisCachingService>();
+builder.Services.AddScoped<ISmsService, SmsService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 // External services
-builder.Services.AddHttpClient<IExternalExchangeRateService, ExternalExchangeRateService>();
+builder.Services.AddHttpClient<IExternalExchangeRateService, ExternalExchangeRateService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
 
 // Currency exchange service
 builder.Services.AddScoped<ICurrencyExchangeService, CurrencyExchangeService>();
@@ -230,6 +250,32 @@ app.UseRouting();
 
 // ── 2.5 CORS (Must be AFTER UseRouting, BEFORE Auth) ───────────────────────
 app.UseCors("AllowSpecificOrigins");
+
+// ============================================================
+// SEED DATA - ADD THIS SECTION
+// ============================================================
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>();
+
+        // Apply any pending migrations
+        context.Database.Migrate();
+
+        // Seed data
+        DataSeeder.SeedData(context);
+
+        Console.WriteLine("✅ Database seeded successfully!");
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, " An error occurred while seeding the database.");
+    }
+}
+
 
 // ── 2.6 Swagger (Development Only) ──────────────────────────────────────────
 if (app.Environment.IsDevelopment())

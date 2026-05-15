@@ -22,6 +22,11 @@
         public static string ActiveBillers() => "billers:active";
         public static string BillersByCategory(string category) => $"billers:category:{category}";
 
+        // 🆕 Bill payment caching
+        public static string UserBillPayments(Guid userId, int pageNumber, int pageSize)
+            => $"bill-payments:user:{userId}:page:{pageNumber}:size:{pageSize}";
+        public static string BillPayment(Guid paymentId) => $"bill-payment:{paymentId}";
+
         // Notification caching
         public static string UnreadNotificationCount(Guid userId) => $"notifications:unread:{userId}";
         public static string UserNotifications(Guid userId, int pageNumber)
@@ -35,5 +40,6 @@
         public static string UserPattern(Guid userId) => $"user:*:{userId}*";
         public static string WalletPattern(Guid walletId) => $"wallet:*:{walletId}*";
         public static string TransactionPattern(Guid walletId) => $"transactions:wallet:{walletId}*";
+        public static string BillPaymentPattern(Guid userId) => $"bill-payments:user:{userId}*";
     }
 }

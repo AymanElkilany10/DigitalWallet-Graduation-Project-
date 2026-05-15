@@ -53,6 +53,12 @@ namespace DigitalWallet.Infrastructure.Data
             return await _context.SaveChangesAsync();
         }
 
+        public void Dispose()
+        {
+            _transaction?.Dispose();
+            _context.Dispose();
+        }
+
         public async Task BeginTransactionAsync()
         {
             _transaction = await _context.Database.BeginTransactionAsync();
@@ -62,6 +68,7 @@ namespace DigitalWallet.Infrastructure.Data
         {
             if (_transaction != null)
             {
+                await SaveChangesAsync();
                 await _transaction.CommitAsync();
                 await _transaction.DisposeAsync();
                 _transaction = null;
@@ -78,10 +85,6 @@ namespace DigitalWallet.Infrastructure.Data
             }
         }
 
-        public void Dispose()
-        {
-            _transaction?.Dispose();
-            _context.Dispose();
-        }
+        
     }
 }
