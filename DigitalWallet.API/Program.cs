@@ -18,6 +18,7 @@ using DigitalWallet.Application.ExternalServices.SMS;
 using DigitalWallet.Application.ExternalServices.Email;
 using DigitalWallet.Application.Settings;
 using DigitalWallet.Application.Common.Models;
+using DigitalWallet.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,10 +38,16 @@ builder.Services.Configure<JwtSettings>(
 
 
 // ── Redis Caching Configuration ────────────────────────────────────────
-builder.Services.AddStackExchangeRedisCache(options =>
+/*builder.Services.AddStackExchangeRedisCache(options =>
 {
     options.Configuration = builder.Configuration.GetConnectionString("Redis");
     options.InstanceName = "DigitalWallet_";
+});*/
+
+builder.Services.AddMemoryCache(options =>
+{
+    // Optional: cap memory usage to 512 MB
+    options.SizeLimit = null; // null = unlimited
 });
 
 builder.Services.Configure<SendGridSettings>(builder.Configuration.GetSection("SendGrid"));
@@ -78,7 +85,8 @@ builder.Services.AddScoped<IFakeBankService, FakeBankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddScoped<IMoneyRequestService, MoneyRequestService>();
-builder.Services.AddScoped<ICachingService, RedisCachingService>();
+//builder.Services.AddScoped<ICachingService, RedisCachingService>();
+builder.Services.AddSingleton<ICachingService, InMemoryCachingService>();
 builder.Services.AddScoped<ISmsService, SmsService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 
@@ -242,7 +250,7 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 // ── 2.2 Request Logging ─────────────────────────────────────────────────────
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-//// ── 2.3 HTTPS Redirection ───────────────────────────────────────────────────
+// ── 2.3 HTTPS Redirection ───────────────────────────────────────────────────
 //app.UseHttpsRedirection();
 
 // ── 2.4 Routing ─────────────────────────────────────────────────────────────
@@ -278,15 +286,12 @@ using (var scope = app.Services.CreateScope())
 
 
 // ── 2.6 Swagger (Development Only) ──────────────────────────────────────────
-if (app.Environment.IsDevelopment())
+app.UseSwagger();
+app.UseSwaggerUI(options =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Digital Wallet API V1");
-        options.RoutePrefix = "swagger";
-    });
-}
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Digital Wallet API V1");
+    options.RoutePrefix = "swagger";
+});
 
 // ── 2.7 Authentication & Authorization 🔥 CRITICAL ORDER! ───────────────────
 // IMPORTANT: Do NOT use custom JwtAuthenticationMiddleware here
