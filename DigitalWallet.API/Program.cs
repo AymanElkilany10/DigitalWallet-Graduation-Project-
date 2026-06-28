@@ -242,8 +242,8 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 // ── 2.2 Request Logging ─────────────────────────────────────────────────────
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-// ── 2.3 HTTPS Redirection ───────────────────────────────────────────────────
-app.UseHttpsRedirection();
+//// ── 2.3 HTTPS Redirection ───────────────────────────────────────────────────
+//app.UseHttpsRedirection();
 
 // ── 2.4 Routing ─────────────────────────────────────────────────────────────
 app.UseRouting();
